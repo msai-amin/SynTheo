@@ -1,0 +1,83 @@
+# SynTheo model serving — resident-trio profile.
+# All three vLLM servers share the single GB10 GPU and the 128GB unified memory pool,
+# so gpu_memory_utilization per service is set conservatively in config/syntheo.yaml
+# and mirrored here. Never point HF_HOME at ~/.cache/huggingface — it's root-owned.
+
+x-vllm-common: &vllm-common
+  image: nvcr.io/nvidia/vllm:25.12.post1-py3
+  runtime: nvidia
+  ipc: host
+  ulimits:
+    memlock: -1
+    stack: 67108864
+  environment:
+    - HF_HOME=/hf-cache
+    - HF_HUB_OFFLINE=0
+  volumes:
+    - ../data/hf-cache:/hf-cache
+  restart: unless-stopped
+
+services:
+  heavy:
+    <<: *vllm-common
+    container_name: syntheo-heavy
+    ports:
+      - "8001:8001"
+    command:
+      - vllm
+      - serve
+      - openai/gpt-oss-120b
+      - --served-model-name=heavy
+      - --port=8001
+      - --gpu-memory-utilization=0.48
+      - --max-num-seqs=16
+      - --max-model-len=32768
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+      start_period: 600s
+
+  mid:
+    <<: *vllm-common
+    container_name: syntheo-mid
+    ports:
+      - "8002:8002"
+    command:
+      - vllm
+      - serve
+      - Qwen/Qwen3-32B-AWQ
+      - --served-model-name=mid
+      - --port=8002
+      - --quantization=awq
+      - --gpu-memory-utilization=0.14
+      - --max-num-seqs=16
+      - --max-model-len=32768
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+      start_period: 300s
+
+  fast:
+    <<: *vllm-common
+    container_name: syntheo-fast
+    ports:
+      - "8003:8003"
+    command:
+      - vllm
+      - serve
+      - nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+      - --served-model-name=fast
+      - --port=8003
+      - --gpu-memory-utilization=0.125
+      - --max-num-seqs=32
+      - --max-model-len=16384
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+      start_period: 300s

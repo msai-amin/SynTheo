@@ -1,0 +1,106 @@
+# SynTheo configuration — single source of truth for models, ports, budgets.
+# No hidden defaults: anything that affects a run's reproducibility lives here.
+
+profile: resident-trio  # resident-trio | super-swap
+
+paths:
+  repo_root: .
+  hf_home: ./data/hf-cache      # project-local HF cache; ~/.cache/huggingface is root-owned on this box
+  episode_db: ./data/episodes.sqlite3
+  eval_suites: ./evals/suites
+  eval_reports: ./evals/reports
+
+models:
+  heavy:
+    role: "primary generator (math/logic BoN; prover)"
+    repo: openai/gpt-oss-120b
+    quant: mxfp4
+    port: 8001
+    served_model_name: heavy
+    approx_mem_gb: 61
+    gpu_memory_utilization: 0.48
+    max_num_seqs: 16
+    max_model_len: 32768
+    timeout_s: 300
+
+  mid:
+    role: "skeptic; cross-family judge; diversity generator"
+    repo: Qwen/Qwen3-32B-AWQ
+    quant: awq
+    port: 8002
+    served_model_name: mid
+    approx_mem_gb: 18
+    gpu_memory_utilization: 0.14
+    max_num_seqs: 16
+    max_model_len: 32768
+    timeout_s: 120
+
+  fast:
+    role: "router; Tier-1 fast path; future RL target"
+    repo: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+    quant: nvfp4
+    port: 8003
+    served_model_name: fast
+    approx_mem_gb: 16
+    gpu_memory_utilization: 0.125
+    max_num_seqs: 32
+    max_model_len: 16384
+    timeout_s: 60
+
+  super_swap:
+    # Alternate for `heavy` under the super-swap profile. Not launched by default.
+    role: "primary generator (super-swap profile)"
+    repo: nvidia/Nemotron-3-Super-120B-A12B-NVFP4
+    quant: nvfp4
+    port: 8001
+    served_model_name: heavy
+    approx_mem_gb: 60
+    gpu_memory_utilization: 0.55
+    max_num_seqs: 16
+    max_model_len: 32768
+    timeout_s: 300
+
+memory_budget:
+  total_unified_gb: 128
+  min_headroom_gb: 20   # OS + KV cache headroom that must remain free
+
+tiers:
+  router:
+    max_completion_tokens: 200
+    model: fast
+  tier1:
+    model: fast
+  tier2:
+    n: 8
+    split:
+      heavy: 5
+      mid: 3
+    temperature_range: [0.8, 1.0]
+  tier3:
+    prover_model: heavy
+    skeptic_model: mid
+    judge_model: fast   # third family; falls back to mid if mid didn't play skeptic this run
+    max_rebuttal_rounds: 1
+
+routing:
+  # [LOCKED] philosophy|mixed -> tier3; difficulty<=2 and votable -> tier1; else tier2
+  philosophy_or_mixed_tier: 3
+  reflex_max_difficulty: 2
+  shadow_rerun_fraction: 0.01   # fraction of Tier-1 verified successes shadow-re-run at Tier 2
+
+verify:
+  sandbox:
+    cpu_seconds: 5
+    mem_mb: 512
+    network: false
+    tmp_dir_only: true
+  z3:
+    max_encoding_attempts: 2
+
+judge:
+  contentless_retry: true
+  required_fields: [strongest_flaw, verdict_reason]
+
+logging:
+  trace_dir: ./data/traces
+  level: INFO

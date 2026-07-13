@@ -1,0 +1,14 @@
+data/hf-cache/
+data/models/
+data/episodes.sqlite3
+data/traces/
+evals/reports/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+node_modules/
+ui/dist/
+.env
