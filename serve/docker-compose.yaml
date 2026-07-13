@@ -1,7 +1,13 @@
 # SynTheo model serving — resident-trio profile.
-# All three vLLM servers share the single GB10 GPU and the 128GB unified memory pool,
-# so gpu_memory_utilization per service is set conservatively in config/syntheo.yaml
-# and mirrored here. Never point HF_HOME at ~/.cache/huggingface — it's root-owned.
+# All three vLLM servers share the single GB10 GPU and the ~121GB unified memory pool.
+# gpu-memory-utilization values mirror config/syntheo.yaml and are based on MEASURED
+# loading sizes (heavy takes 66.0 GiB, not the ~61 the plan assumed).
+#
+# Startup is SEQUENTIAL (heavy -> mid -> fast via depends_on/service_healthy):
+# loading all three at once exhausted unified memory and hard-rebooted the box
+# on 2026-07-13. Never remove the dependency chain.
+#
+# Never point HF_HOME at ~/.cache/huggingface — it's root-owned on this box.
 
 x-vllm-common: &vllm-common
   image: nvcr.io/nvidia/vllm:25.12.post1-py3
@@ -29,19 +35,22 @@ services:
       - openai/gpt-oss-120b
       - --served-model-name=heavy
       - --port=8001
-      - --gpu-memory-utilization=0.48
+      - --gpu-memory-utilization=0.60
       - --max-num-seqs=16
-      - --max-model-len=32768
+      - --max-model-len=24576
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 20s
       timeout: 10s
-      retries: 30
-      start_period: 600s
+      retries: 45
+      start_period: 900s
 
   mid:
     <<: *vllm-common
     container_name: syntheo-mid
+    depends_on:
+      heavy:
+        condition: service_healthy
     ports:
       - "8002:8002"
     command:
@@ -50,10 +59,11 @@ services:
       - Qwen/Qwen3-32B-AWQ
       - --served-model-name=mid
       - --port=8002
-      - --quantization=awq
-      - --gpu-memory-utilization=0.14
+      - --quantization=awq_marlin
+      - --kv-cache-dtype=fp8
+      - --gpu-memory-utilization=0.185
       - --max-num-seqs=16
-      - --max-model-len=32768
+      - --max-model-len=16384
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 20s
@@ -64,17 +74,21 @@ services:
   fast:
     <<: *vllm-common
     container_name: syntheo-fast
+    depends_on:
+      mid:
+        condition: service_healthy
     ports:
       - "8003:8003"
     command:
       - vllm
       - serve
-      - nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+      - nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8
       - --served-model-name=fast
       - --port=8003
-      - --gpu-memory-utilization=0.125
+      - --gpu-memory-utilization=0.055
       - --max-num-seqs=32
       - --max-model-len=16384
+      - --trust-remote-code
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 20s

@@ -17,10 +17,12 @@ models:
     quant: mxfp4
     port: 8001
     served_model_name: heavy
-    approx_mem_gb: 61
-    gpu_memory_utilization: 0.48
+    # Measured 2026-07-13: model loading takes 66.0 GiB (not the ~61 the plan assumed)
+    # + ~3 GiB activation reserve. 0.60 of ~119.6 GiB = 71.8 GiB -> ~2.8 GiB KV.
+    approx_mem_gb: 69
+    gpu_memory_utilization: 0.60
     max_num_seqs: 16
-    max_model_len: 32768
+    max_model_len: 24576
     timeout_s: 300
 
   mid:
@@ -29,20 +31,25 @@ models:
     quant: awq
     port: 8002
     served_model_name: mid
-    approx_mem_gb: 18
-    gpu_memory_utilization: 0.14
+    # 17 GiB weights + ~2 activation + 2.1 GiB fp8 KV for one 16k seq.
+    approx_mem_gb: 19
+    gpu_memory_utilization: 0.185
+    kv_cache_dtype: fp8
     max_num_seqs: 16
-    max_model_len: 32768
+    max_model_len: 16384
     timeout_s: 120
 
   fast:
     role: "router; Tier-1 fast path; future RL target"
-    repo: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
-    quant: nvfp4
+    # Downsized from Nemotron-3-Nano-30B-A3B-NVFP4 (18 GiB measured) on 2026-07-13:
+    # the 30B trio needed ~108 GiB resident before KV, leaving <8 GiB headroom and
+    # crashing the box. Same family, so the RL-target path is preserved.
+    repo: nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8
+    quant: fp8
     port: 8003
     served_model_name: fast
-    approx_mem_gb: 16
-    gpu_memory_utilization: 0.125
+    approx_mem_gb: 6
+    gpu_memory_utilization: 0.055
     max_num_seqs: 32
     max_model_len: 16384
     timeout_s: 60
@@ -61,8 +68,10 @@ models:
     timeout_s: 300
 
 memory_budget:
-  total_unified_gb: 128
-  min_headroom_gb: 20   # OS + KV cache headroom that must remain free
+  total_unified_gb: 121   # what the OS actually reports on this box
+  # Spec asked for 20, but measured weights (66+17+5 GiB) + activation reserves make
+  # that unreachable even with fast downsized to 4B; 15 approved 2026-07-13.
+  min_headroom_gb: 15
 
 tiers:
   router:

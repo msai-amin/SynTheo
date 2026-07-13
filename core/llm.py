@@ -30,6 +30,7 @@ class LLMError(RuntimeError):
 class Sample:
     alias: str
     text: str
+    reasoning: str  # reasoning_content for models with a reasoning parser (e.g. gpt-oss)
     finish_reason: str | None
     tokens_in: int
     tokens_out: int
@@ -191,11 +192,12 @@ class LLMClient:
         tokens_out_each = tokens_out_total // n_choices if n_choices else tokens_out_total
         samples = []
         for choice in choices:
-            text = choice.get("message", {}).get("content", "")
+            msg = choice.get("message", {})
             samples.append(
                 Sample(
                     alias=alias,
-                    text=text,
+                    text=msg.get("content") or "",
+                    reasoning=msg.get("reasoning_content") or "",
                     finish_reason=choice.get("finish_reason"),
                     tokens_in=tokens_in,
                     tokens_out=tokens_out_each,

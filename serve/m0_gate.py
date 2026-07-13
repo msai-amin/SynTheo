@@ -24,8 +24,8 @@ async def main() -> None:
     print("all healthy:", status)
 
     prompt = [{"role": "user", "content": "What is 17 * 23? Answer with just the number."}]
-    plan = [("heavy", prompt, {"n": 5, "temperature": 0.9, "max_tokens": 64})] + [
-        ("mid", prompt, {"n": 3, "temperature": 0.9, "max_tokens": 64})
+    plan = [("heavy", prompt, {"n": 5, "temperature": 0.9, "max_tokens": 2048})] + [
+        ("mid", prompt, {"n": 3, "temperature": 0.9, "max_tokens": 2048})
     ]
 
     async with LLMClient(config=cfg) as client:
@@ -40,7 +40,8 @@ async def main() -> None:
             print(f"ERROR: {s}")
             continue
         ok += 1
-        print(f"[{s.alias}] {s.latency_ms:.0f}ms  tokens_in={s.tokens_in} tokens_out={s.tokens_out}  text={s.text.strip()[:80]!r}")
+        answer = s.text.strip() or f"(reasoning only: {s.reasoning.strip()[-60:]})"
+        print(f"[{s.alias}] {s.latency_ms:.0f}ms  tokens_in={s.tokens_in} tokens_out={s.tokens_out}  text={answer[:80]!r}")
 
     if ok != 8:
         print(f"GATE FAILED: expected 8 successful samples, got {ok}")
