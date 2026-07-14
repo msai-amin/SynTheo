@@ -16,11 +16,16 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
+import json
+import random
+import re
+
 from core.extract import answers_equivalent, extract_answer
 from core.llm import LLMClient, LLMError, Sample
+from core.router import RouteError, route
 from core.store import Store
 from core.verify.execute import verify_by_execution
-from core.verify.judge import JudgeError, judge_sample
+from core.verify.judge import FAMILIES, JudgeError, judge_sample
 from core.verify.logic_z3 import check_logic, extract_smt
 
 TIER2_PROMPT = """Solve this problem step by step.
@@ -278,3 +283,404 @@ async def run_tier2(
            "tokens_in": tokens_in, "tokens_out": tokens_out,
            "wall_ms": round(wall_ms), "n_samples": len(records),
            "n_errors": len(records) - len(ok_records)}
+
+
+# ============================================================================
+# Tier 1 — reflex: single fast-model shot, verified or escalate. [M3]
+# ============================================================================
+
+async def run_tier1(
+    client: LLMClient,
+    store: Store | None,
+    problem: str,
+    *,
+    domain: str = "math",
+    votable: bool = True,
+    problem_id: int | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """One fast-model sample. Yields a `result` event with confidence_type
+    verified|unverified — callers (run_auto) are responsible for escalating an
+    unverified result to Tier 2, per the misroute-insurance rule [LOCKED]."""
+    cfg = client.config
+    fast_alias = cfg["tiers"]["tier1"]["model"]
+    smt_clause = SMT_CLAUSE if domain == "logic" else ""
+    prompt = TIER2_PROMPT.format(problem=problem, smt_clause=smt_clause)
+    messages = [{"role": "user", "content": prompt}]
+
+    run_id = None
+    if store is not None:
+        if problem_id is None:
+            problem_id = store.add_problem(problem, domain)
+        run_id = store.start_run(problem_id, tier=1, strategy="tier1", config={
+            "model": fast_alias, "domain": domain, "votable": votable})
+
+    started = time.monotonic()
+    yield {"type": "sampling", "n": 1, "plan": [{"model": fast_alias, "temp": 0.0}]}
+    try:
+        samples = await client.complete(fast_alias, messages, temperature=0.0,
+                                        max_tokens=4096,
+                                        run_id=str(run_id) if run_id else None)
+        s = samples[0]
+        text, extracted = s.text or s.reasoning, extract_answer(s.text or s.reasoning)
+        rec = SampleRecord(index=0, model=fast_alias, temp=0.0, text=text,
+                           extracted=extracted, tokens_in=s.tokens_in,
+                           tokens_out=s.tokens_out, latency_ms=s.latency_ms)
+    except LLMError as exc:
+        rec = SampleRecord(index=0, model=fast_alias, temp=0.0, text="",
+                           extracted=None, tokens_in=0, tokens_out=0,
+                           latency_ms=0.0, error=str(exc))
+
+    yield {"type": "sample", "index": 0, "model": fast_alias,
+           "extracted": rec.extracted, "error": rec.error, "k": 1, "n": 1}
+
+    if rec.error is None and votable:
+        result = await asyncio.to_thread(verify_by_execution, rec.text, rec.extracted) \
+            if rec.extracted else {"verified": False, "method": "extract",
+                                   "detail": "no answer block"}
+        rec.verifications.append(result)
+        if domain == "logic":
+            smt = extract_smt(rec.text)
+            z3_result = await asyncio.to_thread(
+                check_logic, [smt] if smt else [], rec.extracted or "")
+            rec.verifications.append(z3_result)
+        yield {"type": "verification", "index": 0, "verified": rec.verified,
+               "methods": rec.verifications}
+
+    wall_ms = (time.monotonic() - started) * 1000
+    confidence_type = "verified" if rec.verified else "unverified"
+
+    if store is not None and run_id is not None:
+        sample_id = store.add_sample(run_id, rec.model, rec.temp,
+                                     rec.text or (rec.error or ""), rec.extracted,
+                                     rec.tokens_out, rec.latency_ms)
+        for v in rec.verifications:
+            store.add_verification(sample_id, v["method"], v["verified"], v["detail"])
+        store.finish_run(run_id, verdict=confidence_type, answer=rec.extracted,
+                         confidence_type=confidence_type, tokens_in=rec.tokens_in,
+                         tokens_out=rec.tokens_out, wall_ms=wall_ms)
+
+    yield {"type": "result", "run_id": run_id, "answer": rec.extracted,
+           "confidence_type": confidence_type,
+           "detail": "single fast sample" + ("" if rec.verified else " (unverified)"),
+           "tokens_in": rec.tokens_in, "tokens_out": rec.tokens_out,
+           "wall_ms": round(wall_ms), "n_samples": 1, "n_errors": int(rec.error is not None)}
+
+
+async def _shadow_audit(client: LLMClient, store: Store, problem: str,
+                        domain: str, problem_id: int, tier1_answer: str | None) -> None:
+    """1% of Tier-1 verified successes are shadow-re-run at Tier 2 in the
+    background and compared — the router-audit metric [spec §3.1]. Never
+    raises into the caller; failures here must not affect the served answer."""
+    try:
+        result = None
+        async for ev in run_tier2(client, store, problem, domain=domain,
+                                  votable=True, problem_id=problem_id,
+                                  strategy="shadow-audit"):
+            if ev["type"] == "result":
+                result = ev
+        if result is not None:
+            agree = (tier1_answer is not None and result["answer"] is not None
+                    and answers_equivalent(tier1_answer, str(result["answer"])))
+            store.add_correction(
+                result["run_id"],
+                f"shadow-audit vs tier1 answer={tier1_answer!r}: "
+                f"{'AGREE' if agree else 'DISAGREE'}")
+    except Exception:
+        pass  # audit is best-effort; never let it surface as a user-facing error
+
+
+# ============================================================================
+# Tier 3 — adversarial: prover/skeptic/rebuttal/judge. [LOCKED — spec §3.4]
+# ============================================================================
+
+PROVER_PROMPT = """State your position on this question. Give explicit,
+numbered premises, then your reasoning, then your conclusion.
+
+End your response with:
+```premises
+["<premise 1>", "<premise 2>", ...]
+```
+```answer
+<your conclusion, one to two sentences>
+```
+
+Question:
+{problem}"""
+
+# [LOCKED — spec §3.4] exact role prompt
+SKEPTIC_PROMPT = """You are rewarded ONLY for the strength of your attack.
+Steelman the opposing position, identify the weakest premise, produce the
+single strongest counterargument. Agreeing is failure.
+
+The question was:
+{problem}
+
+The position to attack:
+{position}
+
+Respond with your steelman of the opposing view, your identification of the
+weakest premise, and your strongest counterargument. End with:
+```objection
+<your single strongest counterargument, one to two sentences>
+```"""
+
+REBUTTAL_PROMPT = """Your position was challenged. Here is the strongest
+counterargument against it:
+
+{objection}
+
+Respond to this specific counterargument. You may concede a point, refine your
+position, or defend it — but do not ignore the objection. End with:
+```answer
+<your final conclusion after considering the objection, one to two sentences>
+```"""
+
+# Fresh context: the judge sees a structured digest, never the raw transcript
+# (context-ceiling defense [LOCKED] — one rebuttal round, no growing transcript).
+SYNTHESIS_PROMPT = """You are judging a philosophical dispute. You did not
+witness the debate directly; here is a neutral digest of it.
+
+Question: {problem}
+
+Position (with premises):
+{position}
+Premises: {premises}
+
+Strongest objection raised against the position:
+{objection}
+
+Position's response to that objection:
+{rebuttal}
+
+Score the position 1-10 and produce a synthesis. The surviving objection is
+the strongest part of the counterargument that the rebuttal did NOT
+adequately answer — there is almost always one; only say "none" if the
+rebuttal is airtight, which is rare.
+
+Respond with JSON only:
+{{"answer": "<the synthesized final answer, 1-3 sentences>",
+  "key_premises": ["<premise>", ...],
+  "strongest_surviving_objection": "<specific unresolved weakness, or the
+    single word 'none' if truly none remains>",
+  "judge_confidence": <1-10>}}"""
+
+
+class Tier3ContractError(ValueError):
+    """The output contract [LOCKED] was not met: every Tier-3 answer must ship
+    with a surviving objection, or the run is a validation failure, not a
+    quietly-degraded success."""
+
+
+def _extract_fenced(text: str, tag: str) -> str | None:
+    m = re.search(rf"```{tag}\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    return m.group(1).strip() if m else None
+
+
+def _parse_synthesis(raw: str) -> dict:
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not m:
+        raise Tier3ContractError(f"judge produced no JSON: {raw[:200]!r}")
+    try:
+        data = json.loads(m.group(0))
+    except json.JSONDecodeError as exc:
+        raise Tier3ContractError(f"judge JSON invalid: {exc}") from exc
+    for field_name in ("answer", "key_premises", "strongest_surviving_objection",
+                       "judge_confidence"):
+        if field_name not in data:
+            raise Tier3ContractError(f"judge output missing {field_name!r}")
+    objection = str(data["strongest_surviving_objection"]).strip()
+    if not objection:
+        raise Tier3ContractError("empty strongest_surviving_objection")
+    return data
+
+
+async def run_tier3(
+    client: LLMClient,
+    store: Store | None,
+    problem: str,
+    *,
+    domain: str = "philosophy",
+    problem_id: int | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Prover -> skeptic -> one rebuttal round -> fresh-context judge synthesis.
+    Raises Tier3ContractError if the output contract [LOCKED] can't be met."""
+    cfg = client.config
+    tier3_cfg = cfg["tiers"]["tier3"]
+    prover_alias = tier3_cfg["prover_model"]
+    skeptic_alias = tier3_cfg["skeptic_model"]
+    judge_alias = tier3_cfg["judge_model"]
+    assert FAMILIES[judge_alias] not in (FAMILIES[prover_alias], FAMILIES[skeptic_alias]), \
+        "Tier-3 judge must be a third family, distinct from prover and skeptic"
+
+    run_id = None
+    if store is not None:
+        if problem_id is None:
+            problem_id = store.add_problem(problem, domain)
+        run_id = store.start_run(problem_id, tier=3, strategy="tier3", config={
+            "prover": prover_alias, "skeptic": skeptic_alias, "judge": judge_alias,
+            "max_rebuttal_rounds": tier3_cfg["max_rebuttal_rounds"]})
+
+    started = time.monotonic()
+    tokens_in = tokens_out = 0
+
+    def _account(s: Sample) -> None:
+        nonlocal tokens_in, tokens_out
+        tokens_in += s.tokens_in
+        tokens_out += s.tokens_out
+
+    yield {"type": "proving", "model": prover_alias}
+    prover_samples = await client.complete(
+        prover_alias, [{"role": "user", "content": PROVER_PROMPT.format(problem=problem)}],
+        temperature=0.7, max_tokens=4096, run_id=str(run_id) if run_id else None)
+    prover_text = prover_samples[0].text or prover_samples[0].reasoning
+    _account(prover_samples[0])
+    position = _extract_fenced(prover_text, "answer") or prover_text[-500:]
+    premises_raw = _extract_fenced(prover_text, "premises") or "[]"
+    try:
+        premises = json.loads(premises_raw)
+    except json.JSONDecodeError:
+        premises = [premises_raw]
+    yield {"type": "proved", "position": position}
+
+    yield {"type": "skepticizing", "model": skeptic_alias}
+    skeptic_samples = await client.complete(
+        skeptic_alias,
+        [{"role": "user", "content": SKEPTIC_PROMPT.format(problem=problem, position=position)}],
+        temperature=0.8, max_tokens=4096, run_id=str(run_id) if run_id else None)
+    skeptic_text = skeptic_samples[0].text or skeptic_samples[0].reasoning
+    _account(skeptic_samples[0])
+    objection = _extract_fenced(skeptic_text, "objection") or skeptic_text[-500:]
+    yield {"type": "skepticized", "objection": objection}
+
+    # exactly one rebuttal round [LOCKED context-ceiling defense]
+    yield {"type": "rebutting", "model": prover_alias}
+    rebuttal_samples = await client.complete(
+        prover_alias,
+        [{"role": "user", "content": PROVER_PROMPT.format(problem=problem)},
+         {"role": "assistant", "content": prover_text},
+         {"role": "user", "content": REBUTTAL_PROMPT.format(objection=objection)}],
+        temperature=0.7, max_tokens=4096, run_id=str(run_id) if run_id else None)
+    rebuttal_text = rebuttal_samples[0].text or rebuttal_samples[0].reasoning
+    _account(rebuttal_samples[0])
+    rebuttal = _extract_fenced(rebuttal_text, "answer") or rebuttal_text[-500:]
+    yield {"type": "rebutted", "rebuttal": rebuttal}
+
+    # judge sees a FRESH context: a structured digest, never the raw transcript
+    yield {"type": "judging", "model": judge_alias}
+    digest_prompt = SYNTHESIS_PROMPT.format(
+        problem=problem, position=position, premises=json.dumps(premises),
+        objection=objection, rebuttal=rebuttal)
+    synthesis_data = None
+    last_error = None
+    for attempt in range(2):  # one retry if the contract isn't met, then fail loudly
+        judge_samples = await client.complete(
+            judge_alias, [{"role": "user", "content": digest_prompt}],
+            temperature=0.2, max_tokens=2048, run_id=str(run_id) if run_id else None)
+        _account(judge_samples[0])
+        try:
+            synthesis_data = _parse_synthesis(judge_samples[0].text or judge_samples[0].reasoning)
+            break
+        except Tier3ContractError as exc:
+            last_error = exc
+            digest_prompt = (SYNTHESIS_PROMPT.format(
+                problem=problem, position=position, premises=json.dumps(premises),
+                objection=objection, rebuttal=rebuttal)
+                + "\n\nYour previous response violated the output contract "
+                  f"({exc}). Every field is required; strongest_surviving_objection "
+                  "must be non-empty (use 'none' only if truly none remains).")
+
+    wall_ms = (time.monotonic() - started) * 1000
+
+    if synthesis_data is None:
+        if store is not None and run_id is not None:
+            store.finish_run(run_id, verdict="invalid", answer=None,
+                             confidence_type="invalid", tokens_in=tokens_in,
+                             tokens_out=tokens_out, wall_ms=wall_ms)
+        raise Tier3ContractError(f"Tier-3 output contract violated twice: {last_error}")
+
+    if store is not None and run_id is not None:
+        store.finish_run(run_id, verdict="judged", answer=synthesis_data["answer"],
+                         confidence_type="judged", tokens_in=tokens_in,
+                         tokens_out=tokens_out, wall_ms=wall_ms)
+
+    yield {"type": "result", "run_id": run_id, "answer": synthesis_data["answer"],
+           "key_premises": synthesis_data["key_premises"],
+           "strongest_surviving_objection": synthesis_data["strongest_surviving_objection"],
+           "judge_confidence": synthesis_data["judge_confidence"],
+           "confidence_type": "judged", "tokens_in": tokens_in, "tokens_out": tokens_out,
+           "wall_ms": round(wall_ms)}
+
+
+# ============================================================================
+# Auto-routing with escalation. [M3 — spec §3.1 misroute insurance]
+# ============================================================================
+
+async def run_auto(
+    client: LLMClient,
+    store: Store | None,
+    problem: str,
+) -> AsyncIterator[dict[str, Any]]:
+    """Route, run the assigned tier, escalate on the LOCKED misroute-insurance
+    rules, and log every escalation with its reason."""
+    cfg = client.config
+    problem_id = store.add_problem(problem, "unrouted") if store is not None else None
+
+    try:
+        r = await route(client, problem)
+    except RouteError as exc:
+        yield {"type": "route_failed", "error": str(exc)}
+        # fail safe: an unclassifiable problem gets the most thorough treatment
+        r = None
+
+    if r is None:
+        async for ev in run_tier2(client, store, problem, domain="math",
+                                  votable=False, problem_id=problem_id,
+                                  strategy="auto->tier2(route-failed)"):
+            yield ev
+        return
+
+    yield {"type": "routed", "domain": r.domain, "difficulty": r.difficulty,
+           "votable": r.votable, "rationale": r.rationale, "tier": r.tier}
+
+    if r.tier == 1:
+        result = None
+        async for ev in run_tier1(client, store, problem, domain=r.domain,
+                                  votable=r.votable, problem_id=problem_id):
+            if ev["type"] == "result":
+                result = ev
+            yield ev
+        if result["confidence_type"] != "verified":
+            yield {"type": "escalation", "from_tier": 1, "to_tier": 2,
+                   "reason": "tier1 result failed verification"}
+            async for ev in run_tier2(client, store, problem, domain=r.domain,
+                                      votable=r.votable, problem_id=problem_id,
+                                      strategy="tier1->tier2"):
+                yield ev
+            return
+        # shadow-audit: 1% of Tier-1 verified successes re-run at Tier 2 in
+        # the background for the router-audit metric [spec §3.1]
+        if store is not None and random.random() < cfg["routing"]["shadow_rerun_fraction"]:
+            asyncio.create_task(_shadow_audit(
+                client, store, problem, r.domain, problem_id, result["answer"]))
+        return
+
+    if r.tier == 2:
+        result = None
+        async for ev in run_tier2(client, store, problem, domain=r.domain,
+                                  votable=r.votable, problem_id=problem_id,
+                                  strategy="auto->tier2"):
+            if ev["type"] == "result":
+                result = ev
+            yield ev
+        if result["confidence_type"] not in ("verified", "consensus"):
+            yield {"type": "escalation", "from_tier": 2, "to_tier": 3,
+                   "reason": f"tier2 unverified disagreement "
+                             f"({result['confidence_type']})"}
+            async for ev in run_tier3(client, store, problem, domain="mixed",
+                                      problem_id=problem_id):
+                yield ev
+        return
+
+    async for ev in run_tier3(client, store, problem, domain=r.domain,
+                              problem_id=problem_id):
+        yield ev
