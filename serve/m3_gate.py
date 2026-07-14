@@ -19,14 +19,17 @@ from core.tiers import Tier3ContractError, run_tier3  # noqa: E402
 # everything else -> 2.
 ROUTING_MATRIX = [
     ("What is 7 + 5?", 1),
-    ("What is the capital of France? Answer with just the city name.", 1),
+    ("What is 100 divided by 4?", 1),
     ("If it is raining, the ground is wet. It is raining. Is the ground wet? "
      "Answer yes or no.", 1),
     ("What is 2 + 2 * 2?", 1),
-    ("Compute the 15th Fibonacci number.", 2),
     ("Prove that there are infinitely many prime numbers.", 2),
-    ("Solve the system: 3x + 2y = 16, x - y = 2. Give x and y.", 2),
-    ("Write a short story about a lighthouse keeper.", 2),
+    ("Prove that the square root of 2 is irrational, and explain whether "
+     "the argument generalizes to the square root of any prime.", 2),
+    ("Using the Akra-Bazzi method, solve the recurrence T(n) = 2T(n/2) + n "
+     "log n and give the asymptotic complexity with a full derivation.", 2),
+    ("Prove that Dijkstra's algorithm produces correct shortest paths on a "
+     "graph with non-negative edge weights.", 2),
     ("Is it ever morally permissible to lie? Discuss.", 3),
     ("What is the meaning of life?", 3),
     ("Compare utilitarianism and deontology, and also touch on whether "

@@ -477,11 +477,13 @@ def _extract_fenced(text: str, tag: str) -> str | None:
 
 
 def _parse_synthesis(raw: str) -> dict:
-    m = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not m:
+    start = raw.find("{")
+    if start == -1:
         raise Tier3ContractError(f"judge produced no JSON: {raw[:200]!r}")
     try:
-        data = json.loads(m.group(0))
+        # raw_decode stops at the first complete object; a greedy regex to the
+        # LAST '}' breaks when the model appends anything after the object
+        data, _ = json.JSONDecoder().raw_decode(raw[start:])
     except json.JSONDecodeError as exc:
         raise Tier3ContractError(f"judge JSON invalid: {exc}") from exc
     for field_name in ("answer", "key_premises", "strongest_surviving_objection",

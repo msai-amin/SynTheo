@@ -82,11 +82,13 @@ def is_contentless(verdict: dict) -> bool:
 
 
 def parse_verdict(raw: str) -> dict | None:
-    m = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not m:
+    start = raw.find("{")
+    if start == -1:
         return None
     try:
-        verdict = json.loads(m.group(0))
+        # raw_decode stops at the first complete object; a greedy \{.*\} regex
+        # to the LAST '}' breaks if the model appends anything after it
+        verdict, _ = json.JSONDecoder().raw_decode(raw[start:])
     except json.JSONDecodeError:
         return None
     try:
