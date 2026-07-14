@@ -116,6 +116,30 @@ def run_sandboxed(code: str) -> ExecResult:
             )
 
 
+def _answer_seeded_in_source(code: str, claimed_answer: str) -> bool:
+    """True when a NON-NUMERIC claimed answer appears as a string literal in the
+    block: the 'computation' is then seeded with its own conclusion (dict
+    lookups, conditional prints of the answer word). Numeric literals are fine —
+    `assert result == 391` is genuine checking."""
+    claim = claimed_answer.strip().lower()
+    if not claim:
+        return False
+    try:
+        float(claim.replace("/", "").replace(".", "", 1).replace("-", "", 1))
+        return False  # numeric-ish claims may legitimately appear in asserts
+    except ValueError:
+        pass
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if claim in node.value.lower():
+                return True
+    return False
+
+
 def verify_by_execution(sample_text: str, claimed_answer: str) -> dict:
     """Run the sample's python blocks; verified iff a block runs cleanly and its
     final stdout line matches the claimed answer (via extract.answers_equivalent)."""
@@ -124,10 +148,11 @@ def verify_by_execution(sample_text: str, claimed_answer: str) -> dict:
     blocks = extract_python_blocks(sample_text)
     if not blocks:
         return {"verified": False, "method": "execute", "detail": "no python block"}
-    blocks = [b for b in blocks if not is_echo_block(b)]
+    blocks = [b for b in blocks if not is_echo_block(b)
+              and not _answer_seeded_in_source(b, claimed_answer)]
     if not blocks:
         return {"verified": False, "method": "execute",
-                "detail": "echo block: prints answer without computing it"}
+                "detail": "echo block: answer printed or seeded, not computed"}
     for code in blocks:
         result = run_sandboxed(code)
         if not result.ok:

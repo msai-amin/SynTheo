@@ -75,8 +75,11 @@ async def main() -> None:
                     failures.append(f"run {rid}: no samples stored")
                 if trace["run"]["finished"] is None:
                     failures.append(f"run {rid}: never finished")
-                if not any(s["verifications"] for s in trace["samples"]):
-                    failures.append(f"run {rid}: no verifications stored")
+                # a complete trace has mechanical verifications (votable path)
+                # or judgments (judge-only path) attached to its samples
+                if not any(s["verifications"] or s["judgments"]
+                           for s in trace["samples"]):
+                    failures.append(f"run {rid}: no verifications or judgments")
 
             print(f"confidence types seen: {dict(confidence_seen)}")
             for ct in ("verified", "consensus", "judged"):

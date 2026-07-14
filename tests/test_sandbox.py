@@ -149,3 +149,15 @@ def test_echo_block_never_verifies():
     sample = 'my answer:\n```python\nprint("42")\n```\n```answer\n42\n```'
     r = verify_by_execution(sample, "42")
     assert r["verified"] is False and "echo" in r["detail"]
+
+def test_answer_laundered_through_dict_not_verified():
+    sample = ('```python\nd = {"AU": "Canberra"}\nprint(d["AU"])\n```\n'
+              '```answer\nCanberra\n```')
+    r = verify_by_execution(sample, "Canberra")
+    assert r["verified"] is False and "echo" in r["detail"]
+
+def test_numeric_assert_still_verifies():
+    sample = ('```python\nx = 17 * 23\nassert x == 391\nprint(x)\n```\n'
+              '```answer\n391\n```')
+    r = verify_by_execution(sample, "391")
+    assert r["verified"] is True
