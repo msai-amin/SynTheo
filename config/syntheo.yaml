@@ -70,8 +70,9 @@ models:
 memory_budget:
   total_unified_gb: 121   # what the OS actually reports on this box
   # Spec asked for 20, but measured weights (66+17+5 GiB) + activation reserves make
-  # that unreachable even with fast downsized to 4B; 15 approved 2026-07-13.
-  min_headroom_gb: 15
+  # that unreachable even with fast downsized to 4B. Measured stable headroom is ~9.4;
+  # gate set to 8, approved 2026-07-13 (startup spike fixed via sequential loading).
+  min_headroom_gb: 8
 
 tiers:
   router:
