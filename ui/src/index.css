@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+/* instrument panel, not chat toy: dense, legible, zero decorative animation */
+:root {
+  color-scheme: dark;
+}
+body {
+  @apply bg-zinc-950 text-zinc-200 font-mono text-sm antialiased;
+}
+
+.badge {
+  @apply inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold;
+}
+.badge-verified { @apply bg-teal-950 text-teal-300 border border-teal-600; }
+.badge-fail     { @apply bg-red-950 text-red-300 border border-red-700; }
+.badge-judge    { @apply bg-amber-950 text-amber-300 border border-amber-600; }
+.badge-neutral  { @apply bg-zinc-800 text-zinc-300 border border-zinc-600; }
+
+.card { @apply bg-zinc-900 border border-zinc-800 rounded p-3; }
+
+.answer-verified { @apply border-2 border-teal-500; }
+.answer-consensus { @apply border-2 border-dashed border-teal-600; }
+.answer-judged { @apply border-2 border-amber-500; }
+.answer-unverified { @apply border-2 border-zinc-600; }
