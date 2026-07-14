@@ -1,7 +1,4 @@
-data/hf-cache/
-data/models/
-data/episodes.sqlite3
-data/traces/
+data/
 evals/reports/
 .venv/
 __pycache__/
