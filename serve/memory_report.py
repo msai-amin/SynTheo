@@ -47,10 +47,10 @@ def main() -> None:
         # fall back to /proc/meminfo for the unified pool.
         meminfo = Path("/proc/meminfo").read_text()
         mem_total_kb = int(
-            next(l for l in meminfo.splitlines() if l.startswith("MemTotal:")).split()[1]
+            next(ln for ln in meminfo.splitlines() if ln.startswith("MemTotal:")).split()[1]
         )
         mem_avail_kb = int(
-            next(l for l in meminfo.splitlines() if l.startswith("MemAvailable:")).split()[1]
+            next(ln for ln in meminfo.splitlines() if ln.startswith("MemAvailable:")).split()[1]
         )
         total_gb = mem_total_kb / 1024 / 1024
         used_gb = total_gb - mem_avail_kb / 1024 / 1024
