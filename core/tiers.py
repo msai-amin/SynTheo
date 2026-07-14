@@ -149,8 +149,13 @@ async def run_tier2(
     n: int | None = None,
     problem_id: int | None = None,
     strategy: str = "tier2",
+    verify: bool = True,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Verified Best-of-N. Yields progress events; the last event is type=result."""
+    """Verified Best-of-N. Yields progress events; the last event is type=result.
+
+    verify=False turns this into the pure self-consistency baseline (majority
+    vote over canonicalized answers, no mechanical verification) for run_eval.
+    """
     cfg = client.config
     tier_cfg = cfg["tiers"]["tier2"]
     n = n or tier_cfg["n"]
@@ -218,8 +223,9 @@ async def run_tier2(
     # Mechanical verification only applies to votable (recomputable) answers.
     # An open-ended answer has nothing a program can recompute — models will
     # happily "verify" one by printing it back (observed in the M2 gate), so
-    # non-votable runs go straight to the judge.
-    if votable:
+    # non-votable runs go straight to the judge. verify=False additionally
+    # disables it for the self-consistency baseline strategy.
+    if votable and verify:
         yield {"type": "verifying", "count": len(ok_records)}
         sem = asyncio.Semaphore(_EXEC_CONCURRENCY)
         await asyncio.gather(*(_verify_record(r, domain, sem) for r in ok_records))
