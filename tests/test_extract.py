@@ -89,3 +89,13 @@ def test_hostile_text_never_raises():
                  "10**10**10", "\\", "((("]:
         canonicalize(junk)
         assert answers_equivalent(junk, "24") in (True, False)
+
+
+def test_placeholder_echo_stripped():
+    # small models copy the prompt's "<final answer>" placeholder into the block
+    assert extract_answer("```answer\n<final answer>\n24\n```") == "24"
+    assert extract_answer("```answer\n<answer>\n42\n```") == "42"
+    # a block that is ONLY a placeholder yields no answer
+    assert extract_answer("```answer\n<final answer>\n```") is None
+    # legitimate angle-bracket math is untouched
+    assert extract_answer("```answer\nx < 3 and y > 2\n```") == "x < 3 and y > 2"

@@ -23,15 +23,22 @@ _MC_LETTER = re.compile(r"^\(?([A-Ea-e])\)?[.):]?$")
 _TRANSFORMS = standard_transformations + (implicit_multiplication_application,)
 
 
+_PLACEHOLDER_LINE = re.compile(r"^\s*<[^>]{1,40}>\s*$")  # e.g. "<final answer>"
+
+
 def extract_answer(sample_text: str) -> str | None:
     """Pull the model's final answer from a sample.
 
     Priority: last fenced ```answer block (prompt-enforced format), else last
     \\boxed{}, else None — no heuristic guessing beyond these two forms.
+    Small models sometimes copy the prompt's literal "<final answer>"
+    placeholder into the block above the real answer; such lines are dropped.
     """
     blocks = _ANSWER_BLOCK.findall(sample_text)
     if blocks:
-        return blocks[-1].strip()
+        lines = [ln for ln in blocks[-1].splitlines()
+                 if ln.strip() and not _PLACEHOLDER_LINE.match(ln)]
+        return "\n".join(lines).strip() or None
     boxed = _BOXED.findall(sample_text)
     if boxed:
         return boxed[-1].strip()
