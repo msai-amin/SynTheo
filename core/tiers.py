@@ -210,12 +210,17 @@ async def run_tier2(
     records.sort(key=lambda r: r.index)
     ok_records = [r for r in records if r.error is None]
 
-    yield {"type": "verifying", "count": len(ok_records)}
-    sem = asyncio.Semaphore(_EXEC_CONCURRENCY)
-    await asyncio.gather(*(_verify_record(r, domain, sem) for r in ok_records))
-    for rec in ok_records:
-        yield {"type": "verification", "index": rec.index,
-               "verified": rec.verified, "methods": rec.verifications}
+    # Mechanical verification only applies to votable (recomputable) answers.
+    # An open-ended answer has nothing a program can recompute — models will
+    # happily "verify" one by printing it back (observed in the M2 gate), so
+    # non-votable runs go straight to the judge.
+    if votable:
+        yield {"type": "verifying", "count": len(ok_records)}
+        sem = asyncio.Semaphore(_EXEC_CONCURRENCY)
+        await asyncio.gather(*(_verify_record(r, domain, sem) for r in ok_records))
+        for rec in ok_records:
+            yield {"type": "verification", "index": rec.index,
+                   "verified": rec.verified, "methods": rec.verifications}
 
     selection = select_answer(records, votable)
 

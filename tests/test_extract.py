@@ -81,3 +81,11 @@ def test_equivalence(a, b, expected):
 
 def test_case_count_meets_spec():
     assert len(EQUIV_CASES) >= 30
+
+
+def test_hostile_text_never_raises():
+    # model stdout is arbitrary text; canonicalize must never explode
+    for junk in ["Alice's age is 24", "it's 1/2", 'quote " unterminated',
+                 "10**10**10", "\\", "((("]:
+        canonicalize(junk)
+        assert answers_equivalent(junk, "24") in (True, False)

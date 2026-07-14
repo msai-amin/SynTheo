@@ -22,7 +22,8 @@ PROBLEMS = [
     ("A number leaves remainder 2 mod 3, 3 mod 5, and 2 mod 7. "
      "What is the smallest such positive integer?", "math", True),
     ("What is the units digit of 7^2026?", "math", True),
-    ("Solve for x: 2x + 6 = 20.", "math", True),
+    ("Is the statement 'this sentence is false' true, false, or paradoxical? "
+     "Answer with one word.", "logic", True),
     ("Alice is twice as old as Bob. Their ages sum to 36. How old is Alice?",
      "logic", True),
     ("If all bloops are razzies and no razzies are lazzies, can a bloop be a "

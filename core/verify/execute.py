@@ -8,6 +8,7 @@ tests/test_sandbox.py PROVES containment of socket/file-write/fork-bomb escapes.
 """
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import tempfile
@@ -35,6 +36,37 @@ class ExecResult:
 
 def extract_python_blocks(sample_text: str) -> list[str]:
     return [b.strip() for b in _PY_BLOCK.findall(sample_text)]
+
+
+def is_echo_block(code: str) -> bool:
+    """True if the block cannot verify anything because it computes nothing —
+    only constant assignments and prints of constants/those names. A model that
+    writes `print("Undecidable")` is echoing its answer, not checking it."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return False  # let the sandbox report the real error
+
+    const_names: set[str] = set()
+
+    def _is_const(node: ast.expr) -> bool:
+        if isinstance(node, (ast.Constant, ast.JoinedStr)):
+            return True
+        if isinstance(node, ast.Name):
+            return node.id in const_names
+        return False
+
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant):
+            const_names.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
+        elif (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+              and isinstance(stmt.value.func, ast.Name)
+              and stmt.value.func.id == "print"
+              and all(_is_const(a) for a in stmt.value.args)):
+            continue
+        else:
+            return False  # real computation present
+    return True
 
 
 def run_sandboxed(code: str) -> ExecResult:
@@ -92,6 +124,10 @@ def verify_by_execution(sample_text: str, claimed_answer: str) -> dict:
     blocks = extract_python_blocks(sample_text)
     if not blocks:
         return {"verified": False, "method": "execute", "detail": "no python block"}
+    blocks = [b for b in blocks if not is_echo_block(b)]
+    if not blocks:
+        return {"verified": False, "method": "execute",
+                "detail": "echo block: prints answer without computing it"}
     for code in blocks:
         result = run_sandboxed(code)
         if not result.ok:

@@ -78,10 +78,29 @@ def _try_number(s: str) -> str | None:
     return f"{f.numerator}/{f.denominator}"
 
 
+_CHAINED_POW = re.compile(r"\*\*\s*\(?\d+(\.\d+)?\)?\s*\*\*")
+_BIG_EXPONENT = re.compile(r"\*\*\s*\(?(\d{5,})")
+
+
+def _pathological(s: str) -> bool:
+    """Expressions whose EVALUATION would hang or exhaust memory (10**10**10
+    is a 10-billion-digit integer). Cheap syntactic screen before parse."""
+    if len(s) > 500:
+        return True
+    if _CHAINED_POW.search(s) or _BIG_EXPONENT.search(s):
+        return True
+    return False
+
+
 def _try_sympy(s: str) -> sympy.Expr | None:
+    if _pathological(s):
+        return None
     try:
         expr = parse_expr(s, transformations=_TRANSFORMS, evaluate=True)
-    except (SyntaxError, TypeError, ValueError, AttributeError, sympy.SympifyError):
+    except Exception:
+        # parse_expr raises a zoo on arbitrary model text (SympifyError,
+        # SyntaxError, tokenize.TokenError, MemoryError on huge exponents, ...);
+        # any failure just means "not a math expression"
         return None
     return expr if isinstance(expr, sympy.Expr) else None
 

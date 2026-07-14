@@ -129,3 +129,23 @@ def test_extract_python_blocks():
 def test_exec_result_shape():
     r = run_sandboxed("print(1)")
     assert isinstance(r, ExecResult) and r.ok and r.stdout.strip() == "1"
+
+
+# --- echo-block detection: printing your answer is not verifying it ---
+
+def test_echo_block_detected():
+    from core.verify.execute import is_echo_block
+    assert is_echo_block('print("Undecidable")')
+    assert is_echo_block('answer = "yes"\nprint(answer)')
+    assert is_echo_block('print(f"the answer is 42")')
+
+def test_computing_block_not_echo():
+    from core.verify.execute import is_echo_block
+    assert not is_echo_block("print(17 * 23)")
+    assert not is_echo_block("x = sum(range(101))\nprint(x)")
+    assert not is_echo_block("import sympy\nprint(sympy.prime(47))")
+
+def test_echo_block_never_verifies():
+    sample = 'my answer:\n```python\nprint("42")\n```\n```answer\n42\n```'
+    r = verify_by_execution(sample, "42")
+    assert r["verified"] is False and "echo" in r["detail"]
