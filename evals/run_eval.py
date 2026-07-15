@@ -73,7 +73,7 @@ async def run_strategy(client: LLMClient, store: Store, strategy: str,
                         votable=votable, **kwargs)
     elif strategy == "self-consistency":
         gen = run_tier2(client, store, row["problem"], domain=domain,
-                        votable=True, n=n, strategy="self-consistency",
+                        votable=votable, n=n, strategy="self-consistency",
                         verify=False, **kwargs)
     elif strategy == "tier2":
         if domain == "philosophy":
@@ -107,14 +107,18 @@ async def score_result(client: LLMClient, row: dict, result: dict) -> dict:
         return {"correct": check["verified"], "method": f"gold/{check['method']}",
                 "detail": check["detail"]}
     # philosophy: rubric judge (cross-family vs. nothing specific — the answer
-    # text is what's judged, so exclude nothing; use default judge pool)
+    # text is what's judged, so exclude nothing; use default judge pool).
+    # Judge the full reasoning/argument, not just the terse extracted answer
+    # field — a fenced answer block is 1-2 sentences by design and can't carry
+    # the counterargument-engagement a philosophy rubric requires.
     if not answer:
         return {"correct": False, "score": 0.0, "method": "rubric",
                 "detail": "no answer"}
+    graded_text = result.get("full_text") or str(answer)
     rubric_problem = (f"{row['problem']}\n\nGrading rubric (score against "
                       f"this): {row['rubric']}")
     try:
-        j = await judge_sample(client, rubric_problem, str(answer),
+        j = await judge_sample(client, rubric_problem, graded_text,
                                generator_alias="heavy")
         return {"correct": j.score >= PHIL_PASS_SCORE, "score": j.score,
                 "method": "rubric", "detail": j.verdict_reason[:200]}

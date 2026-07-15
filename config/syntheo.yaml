@@ -37,7 +37,12 @@ models:
     kv_cache_dtype: fp8
     max_num_seqs: 16
     max_model_len: 16384
-    timeout_s: 120
+    # Was 120: traces from the 2026-07-14 core-suite run showed 34% of mid
+    # calls (78/231) exhausting all 3 retries at 120s each (~361ms cumulative
+    # latency observed), i.e. genuinely needing >120s under concurrent load
+    # from heavy's larger generations sharing the same GPU. Matched to heavy's
+    # budget rather than tuned independently.
+    timeout_s: 300
 
   fast:
     role: "router; Tier-1 fast path; future RL target"

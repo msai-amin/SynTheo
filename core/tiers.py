@@ -46,6 +46,26 @@ SMT_CLAUSE = """
 (declare-const each unknown; assert only stated constraints; also declare a \
 constant `answer` equal to the queried quantity; no check-sat)."""
 
+# Open-ended (non-mechanically-verifiable) domains have no gold answer to
+# recompute, so the math contract's code-verification step doesn't apply, and
+# a single-word answer block guarantees rubric failure — the block must carry
+# the actual argument.
+OPEN_ENDED_PROMPT = """Answer this question directly.
+
+{problem}
+
+Give your reasoning, engaging the strongest counterargument you can think of.
+Then end your response with a fenced answer block containing your full \
+position and its core justification (2-5 sentences) — not a single word or a \
+one-line verdict:
+```answer
+<your position and its core justification>
+```"""
+
+
+def _select_prompt(domain: str) -> str:
+    return TIER2_PROMPT if domain in ("math", "logic") else OPEN_ENDED_PROMPT
+
 _EXEC_CONCURRENCY = 4  # docker sandbox runs in flight at once
 
 
@@ -100,6 +120,7 @@ def select_answer(records: list[SampleRecord], votable: bool) -> dict | None:
             top = clusters[0]
             return {
                 "answer": top[0].extracted,
+                "full_text": top[0].text,
                 "confidence_type": "verified",
                 "detail": f"{len(top)}/{len(verified)} verified samples agree",
                 "winner_index": top[0].index,
@@ -113,6 +134,7 @@ def select_answer(records: list[SampleRecord], votable: bool) -> dict | None:
             total = sum(len(c) for c in clusters)
             return {
                 "answer": top[0].extracted,
+                "full_text": top[0].text,
                 "confidence_type": "consensus",
                 "detail": f"{len(top)}/{total}",
                 "winner_index": top[0].index,
@@ -174,7 +196,7 @@ async def run_tier2(
             for i, (alias, _) in enumerate(plan)]
 
     smt_clause = SMT_CLAUSE if domain == "logic" else ""
-    prompt = TIER2_PROMPT.format(problem=problem, smt_clause=smt_clause)
+    prompt = _select_prompt(domain).format(problem=problem, smt_clause=smt_clause)
     messages = [{"role": "user", "content": prompt}]
 
     run_id = None
@@ -252,6 +274,7 @@ async def run_tier2(
         best = max(ok_records, key=lambda r: r.judgment["score"] if r.judgment else 0)
         selection = {
             "answer": best.extracted or best.text[-200:],
+            "full_text": best.text,
             "confidence_type": "judged",
             "detail": f"score {best.judgment['score']:.1f}",
             "winner_index": best.index,
@@ -262,7 +285,7 @@ async def run_tier2(
     tokens_out = sum(r.tokens_out for r in records)
 
     if selection is None:
-        selection = {"answer": None, "confidence_type": "failed",
+        selection = {"answer": None, "full_text": None, "confidence_type": "failed",
                      "detail": "no usable samples", "winner_index": None}
 
     if store is not None and run_id is not None:
@@ -310,7 +333,7 @@ async def run_tier1(
     cfg = client.config
     fast_alias = cfg["tiers"]["tier1"]["model"]
     smt_clause = SMT_CLAUSE if domain == "logic" else ""
-    prompt = TIER2_PROMPT.format(problem=problem, smt_clause=smt_clause)
+    prompt = _select_prompt(domain).format(problem=problem, smt_clause=smt_clause)
     messages = [{"role": "user", "content": prompt}]
 
     run_id = None
@@ -366,6 +389,7 @@ async def run_tier1(
                          tokens_out=rec.tokens_out, wall_ms=wall_ms)
 
     yield {"type": "result", "run_id": run_id, "answer": rec.extracted,
+           "full_text": rec.text or None,
            "confidence_type": confidence_type,
            "detail": "single fast sample" + ("" if rec.verified else " (unverified)"),
            "tokens_in": rec.tokens_in, "tokens_out": rec.tokens_out,
@@ -458,13 +482,23 @@ Strongest objection raised against the position:
 Position's response to that objection:
 {rebuttal}
 
-Score the position 1-10 and produce a synthesis. The surviving objection is
-the strongest part of the counterargument that the rebuttal did NOT
-adequately answer — there is almost always one; only say "none" if the
-rebuttal is airtight, which is rare.
+Score the position 1-10 and render a verdict. Your "answer" must COMMIT: name
+which position on the question is more defensible and the single strongest
+reason, in a clear, direct voice. Do not hedge, split the difference, survey
+both sides, or restate the numeric score in the answer — residual uncertainty
+belongs in the other fields (report the unresolved weakness in
+strongest_surviving_objection; signal how close the call was in
+judge_confidence, which may be low for a genuinely balanced question).
+
+The surviving objection is the strongest part of the counterargument that the
+rebuttal did NOT adequately answer — there is almost always one; only say
+"none" if the rebuttal is airtight, which is rare. Committing to a verdict does
+not mean the objection is resolved; a confident answer can still ship a real
+surviving objection.
 
 Respond with JSON only:
-{{"answer": "<the synthesized final answer, 1-3 sentences>",
+{{"answer": "<a committed position on the question and its core reason, 1-3
+    sentences — a verdict, not a survey of both sides or a restatement of the score>",
   "key_premises": ["<premise>", ...],
   "strongest_surviving_objection": "<specific unresolved weakness, or the
     single word 'none' if truly none remains>",
@@ -611,7 +645,16 @@ async def run_tier3(
                          confidence_type="judged", tokens_in=tokens_in,
                          tokens_out=tokens_out, wall_ms=wall_ms)
 
+    full_text = (
+        f"Position: {position}\nPremises: {json.dumps(premises)}\n\n"
+        f"Strongest objection: {objection}\n\n"
+        f"Response to objection: {rebuttal}\n\n"
+        f"Synthesis: {synthesis_data['answer']}\n"
+        f"Surviving objection: {synthesis_data['strongest_surviving_objection']}"
+    )
+
     yield {"type": "result", "run_id": run_id, "answer": synthesis_data["answer"],
+           "full_text": full_text,
            "key_premises": synthesis_data["key_premises"],
            "strongest_surviving_objection": synthesis_data["strongest_surviving_objection"],
            "judge_confidence": synthesis_data["judge_confidence"],
