@@ -25,6 +25,7 @@ from core.llm import LLMClient, LLMError, Sample
 from core.router import RouteError, route
 from core.store import Store
 from core.verify.execute import verify_by_execution
+from core.verify.isabelle_hol import _PROOF_SEMAPHORE, check_isabelle, extract_theory
 from core.verify.judge import FAMILIES, JudgeError, judge_sample
 from core.verify.logic_z3 import check_logic, extract_smt
 
@@ -147,6 +148,19 @@ async def _verify_record(rec: SampleRecord, domain: str,
                          sem: asyncio.Semaphore) -> None:
     """Attach mechanical verification results to one record (CPU-side, free
     while the GPU decodes — spec 1.1)."""
+    # metaphysics: the sample IS an Isabelle theory (no ```answer block), verified by
+    # the kernel, NOT the Python sandbox. Serialized globally (ADR-002 memory). [ADR-006]
+    if domain == "metaphysics":
+        theory = extract_theory(rec.text)
+        if theory is None:
+            rec.verifications.append(
+                {"verified": False, "method": "isabelle-unverifiable",
+                 "detail": "no theory block"})
+            return
+        async with _PROOF_SEMAPHORE:
+            result = await asyncio.to_thread(check_isabelle, theory, None)
+        rec.verifications.append(result)
+        return
     if rec.extracted is None:
         rec.verifications.append(
             {"verified": False, "method": "extract", "detail": "no answer block"})
@@ -362,7 +376,19 @@ async def run_tier1(
     yield {"type": "sample", "index": 0, "model": fast_alias,
            "extracted": rec.extracted, "error": rec.error, "k": 1, "n": 1}
 
-    if rec.error is None and votable:
+    if rec.error is None and domain == "metaphysics":
+        # A formal proof is verifiable though not "votable"; kernel-check regardless. [ADR-006]
+        theory = extract_theory(rec.text)
+        if theory is not None:
+            async with _PROOF_SEMAPHORE:
+                result = await asyncio.to_thread(check_isabelle, theory, None)
+        else:
+            result = {"verified": False, "method": "isabelle-unverifiable",
+                      "detail": "no theory block"}
+        rec.verifications.append(result)
+        yield {"type": "verification", "index": 0, "verified": rec.verified,
+               "methods": rec.verifications}
+    elif rec.error is None and votable:
         result = await asyncio.to_thread(verify_by_execution, rec.text, rec.extracted) \
             if rec.extracted else {"verified": False, "method": "extract",
                                    "detail": "no answer block"}
@@ -376,7 +402,11 @@ async def run_tier1(
                "methods": rec.verifications}
 
     wall_ms = (time.monotonic() - started) * 1000
-    confidence_type = "verified" if rec.verified else "unverified"
+    # a kernel countermodel is a POSITIVE result (the claim is false), distinct from
+    # an unproved goal — surface it as its own label [ADR-006].
+    refuted = any(v.get("method") == "isabelle-refuted" for v in rec.verifications)
+    confidence_type = ("verified" if rec.verified
+                       else "refuted" if refuted else "unverified")
 
     if store is not None and run_id is not None:
         sample_id = store.add_sample(run_id, rec.model, rec.temp,

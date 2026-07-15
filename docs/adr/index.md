@@ -11,3 +11,4 @@ knowledge of the tools involved.
 | [ADR-003](adr-003-docker-sandbox.md) | Execute model-written code in a locked-down Docker container, because this kernel forbids the lighter bwrap/unshare sandboxes. | Accepted |
 | [ADR-004](adr-004-anti-gaming-verification.md) | Only count model checking code as "verification" if it genuinely recomputes the answer — echo blocks, answer-seeded code, and self-checks of open-ended essays are rejected. | Accepted |
 | [ADR-005](adr-005-sqlite-episode-store.md) | Record every run, sample, verification, and judgment in SQLite (one local file) rather than PostgreSQL or JSON logs. | Accepted |
+| [ADR-006](adr-006-isabelle-verification-backend.md) | Add Isabelle/HOL as a fourth verification backend for formal metaphysics, run as an on-demand memory-capped container (not a warm server) to respect the ADR-002 memory gate. | Accepted (Phase 0, gate passed) |

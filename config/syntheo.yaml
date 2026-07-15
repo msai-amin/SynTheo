@@ -111,6 +111,15 @@ verify:
     tmp_dir_only: true
   z3:
     max_encoding_attempts: 2
+  isabelle:                  # [ADR-006] formal-metaphysics backend (Phase 0)
+    # Documentary, like the blocks above: the live limits are hardcoded constants in
+    # core/verify/isabelle_hol.py (ISABELLE_IMAGE, MEM_MB, WALL_SECONDS, PIDS_LIMIT).
+    # mem_mb 5120: real RSS ~1.7 GiB, but the cgroup charges reclaimable heap page-cache
+    # too, so 3 GiB OOM-kills Nitpick; 5 GiB is reliable (gate-measured 2026-07-15).
+    mem_mb: 5120
+    wall_seconds: 300
+    serialized: true         # one proof at a time (ADR-002 memory discipline)
+    parent_session: GoedelGod
 
 judge:
   contentless_retry: true
