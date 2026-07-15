@@ -146,7 +146,7 @@ export default function AskPage({ onTokRate }) {
 
   const isDebate = Object.keys(debate).length > 0;
   const confClass = result
-    ? { verified: "answer-verified", consensus: "answer-consensus", judged: "answer-judged" }[result.confidence_type] ?? "answer-unverified"
+    ? { verified: "answer-verified", refuted: "answer-refuted", consensus: "answer-consensus", judged: "answer-judged" }[result.confidence_type] ?? "answer-unverified"
     : "";
 
   return (
@@ -218,6 +218,7 @@ export default function AskPage({ onTokRate }) {
           <div className="flex items-center gap-2 mb-2">
             <span className={`badge ${
               result.confidence_type === "verified" ? "badge-verified"
+              : result.confidence_type === "refuted" ? "badge-refuted"
               : result.confidence_type === "judged" ? "badge-judge" : "badge-neutral"}`}>
               {result.confidence_type}{result.detail ? ` · ${result.detail}` : ""}
             </span>

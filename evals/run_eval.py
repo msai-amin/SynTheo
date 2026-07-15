@@ -25,7 +25,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.llm import REPO_ROOT, LLMClient, load_config  # noqa: E402
 from core.store import Store  # noqa: E402
-from core.tiers import run_auto, run_tier1, run_tier2, run_tier3  # noqa: E402
+from core.tiers import (  # noqa: E402
+    run_auto,
+    run_tier1,
+    run_tier2,
+    run_tier3,
+    run_tier_formal,
+)
 from core.verify.judge import JudgeError, judge_sample  # noqa: E402
 from core.verify.mathcheck import check_math  # noqa: E402
 
@@ -86,6 +92,9 @@ async def run_strategy(client: LLMClient, store: Store, strategy: str,
         gen = run_auto(client, store, row["problem"])
     elif strategy == "tier3":
         gen = run_tier3(client, store, row["problem"], domain=domain, **kwargs)
+    elif strategy == "formal":
+        gen = run_tier_formal(client, store, row["problem"], target=row.get("target"),
+                              parent_session=row.get("parent_session"), **kwargs)
     else:
         raise ValueError(strategy)
 
@@ -98,8 +107,13 @@ async def run_strategy(client: LLMClient, store: Store, strategy: str,
 
 
 async def score_result(client: LLMClient, row: dict, result: dict) -> dict:
-    """Score one result against gold answer or rubric."""
+    """Score one result against gold answer, kernel verdict, or rubric."""
     answer = result.get("answer")
+    if row.get("domain") == "metaphysics":  # kernel verdict vs. expected polarity
+        got = result.get("confidence_type")
+        expected = row.get("expected")  # "verified" | "refuted"
+        return {"correct": got == expected, "method": "kernel",
+                "detail": f"got {got!r}, expected {expected!r} — {result.get('detail', '')}"[:200]}
     if "answer" in row:  # math / logic: mechanical comparison with gold
         if answer is None:
             return {"correct": False, "method": "gold", "detail": "no answer"}
@@ -130,7 +144,7 @@ async def score_result(client: LLMClient, row: dict, result: dict) -> dict:
 def aggregate(rows_scored: list[dict]) -> dict:
     """Per-domain and overall accuracy / tokens / wall-time."""
     out: dict[str, dict] = {}
-    for scope in ("math", "logic", "philosophy", "overall"):
+    for scope in ("math", "logic", "philosophy", "metaphysics", "overall"):
         subset = [r for r in rows_scored
                   if scope == "overall" or r["domain"] == scope]
         if not subset:
@@ -150,7 +164,7 @@ async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--suite", default="core")
     ap.add_argument("--strategy", default="tier2",
-                    choices=STRATEGIES + ("all", "tier3"))
+                    choices=STRATEGIES + ("all", "tier3", "formal"))
     ap.add_argument("--n", type=int, default=None, help="tier2 sample count")
     ap.add_argument("--limit-per-domain", type=int, default=None,
                     help="cap problems per domain (smoke runs)")

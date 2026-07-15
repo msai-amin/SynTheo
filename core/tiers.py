@@ -693,6 +693,165 @@ async def run_tier3(
 
 
 # ============================================================================
+# Formal metaphysics — Isabelle/HOL proving. [ADR-006 Phase 1]
+# ============================================================================
+
+# The `\<...>` ASCII form of the Isabelle symbols is used throughout (Isabelle accepts
+# it identically to the unicode glyphs) so the whole pipeline stays plain-ASCII.
+FORMAL_PROMPT = r"""You are proving or refuting a claim in formal metaphysics with
+Isabelle/HOL. Higher-order modal logic (logic KB) is embedded in HOL by the AFP entry
+GoedelGod — Scott's version of Goedel's ontological argument.
+
+Question:
+{problem}
+{target_clause}
+Write ONE complete Isabelle theory. Rules:
+- Name it `Submission` and import the embedding: imports "GoedelGod.GoedelGod".
+- Embedding syntax (propositions have type \<sigma> = i\<Rightarrow>bool; use the \<...> forms):
+    [p]                   p is valid (holds in every world)
+    \<box> p   \<diamond> p          necessity / possibility
+    m\<not>  m\<and>  m\<or>  m\<rightarrow>  m\<equiv>    lifted connectives
+    \<forall>(\<lambda>x. ...)   \<exists>(\<lambda>x. ...)   lifted quantifiers (individuals or properties)
+    P    positiveness      G    God-like      x mL= y   Leibniz equality
+- Proved theorems you may CITE (do not re-derive from axioms):
+    T1: "[\<forall>(\<lambda>\<Phi>. P \<Phi> m\<rightarrow> \<diamond> (\<exists> \<Phi>))]"     positive props are possibly exemplified
+    C:  "[\<diamond> (\<exists> G)]"                       possibly, God exists
+    T2: "[\<forall>(\<lambda>x. G x m\<rightarrow> G ess x)]"          God-likeness is an essence of a God
+    T3: "[\<box> (\<exists> G)]"                       necessarily, God exists
+    C2: "[\<exists> G]"                             God exists
+    Flawlessness, Monotheism ; axioms A1a A1b A2 A3 A4 A5 sym ; defs G_def NE_def ess_def
+- To PROVE a claim, state it and close it — cite the matching theorem:
+    theory Submission imports "GoedelGod.GoedelGod" begin
+    theorem target: "[\<box> (\<exists> G)]" using T3 by simp
+    end
+- To REFUTE a claim (show it is FALSE / has a countermodel), let Nitpick find it — the
+  harness reads a found countermodel as a refutation:
+    theory Submission imports "GoedelGod.GoedelGod" begin
+    theorem target: "[m\<not> (\<exists> G)]" nitpick [user_axioms, expect = genuine] oops
+    end
+- Never write sorry, and never add a new axiomatization/axiom — use only what the entry
+  already proves. Reproduce the target statement CHARACTER-FOR-CHARACTER, including
+  operator spelling: write `m\<rightarrow>` (no internal space), not `m \<rightarrow>` — a
+  space changes the operator and the goal will not match.
+
+Output ONLY the theory in a single ```isabelle fenced block."""
+
+REPAIR_PROMPT = r"""Your theory did not check. Isabelle reported:
+
+{error}
+
+Fix it and output ONLY the corrected complete ```isabelle block. Likely fixes: cite the
+right existing theorem (T1/C/T2/T3/C2/Flawlessness/Monotheism), use `by (metis <lemmas>)`
+or `by simp`, keep the import `"GoedelGod.GoedelGod"`, and state the goal exactly."""
+
+
+def _formal_answer(confidence_type: str, target: str | None) -> str:
+    what = f" of `{target}`" if target else ""
+    return {
+        "verified": f"Proved{what}: kernel-checked theorem.",
+        "refuted": f"Refuted{what}: a countermodel exists, so the claim is not valid.",
+        "unverified": f"Unresolved{what}: no kernel proof or countermodel was produced.",
+    }[confidence_type]
+
+
+async def run_tier_formal(
+    client: LLMClient,
+    store: Store | None,
+    problem: str,
+    *,
+    domain: str = "metaphysics",
+    target: str | None = None,
+    parent_session: str | None = None,
+    problem_id: int | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Prover writes an Isabelle/Isar theory; the LCF kernel adjudicates. One repair
+    round on a failed build (fed the kernel's own error). Yields progress events; the
+    last is type=result with confidence_type verified|refuted|unverified. [ADR-006]"""
+    cfg = client.config
+    fcfg = cfg["tiers"]["formal"]
+    prover_alias = fcfg["prover_model"]
+    max_repair = fcfg["max_repair_rounds"]
+
+    run_id = None
+    if store is not None:
+        if problem_id is None:
+            problem_id = store.add_problem(problem, domain)
+        run_id = store.start_run(problem_id, tier=3, strategy="formal", config={
+            "prover": prover_alias, "parent_session": parent_session or fcfg["parent_session"],
+            "target": target, "max_repair_rounds": max_repair})
+
+    started = time.monotonic()
+    tokens_in = tokens_out = 0
+    target_clause = (f"\nProve or refute EXACTLY this statement:\n```\n{target}\n```\n"
+                     if target else "\nDecide whether the claim holds; state your target theorem.\n")
+    messages = [{"role": "user",
+                 "content": FORMAL_PROMPT.format(problem=problem, target_clause=target_clause)}]
+
+    verdict: dict[str, Any] = {"verified": False, "method": "isabelle-unverifiable",
+                               "detail": "no theory produced"}
+    theory: str | None = None
+
+    for attempt in range(max_repair + 1):
+        yield {"type": "formalizing", "model": prover_alias, "attempt": attempt + 1}
+        try:
+            samples = await client.complete(prover_alias, messages, temperature=0.2,
+                                            max_tokens=4096,
+                                            run_id=str(run_id) if run_id else None)
+        except LLMError as exc:
+            verdict = {"verified": False, "method": "isabelle-unverifiable",
+                       "detail": f"prover call failed: {exc}"}
+            break
+        s = samples[0]
+        tokens_in += s.tokens_in
+        tokens_out += s.tokens_out
+        text = s.text or s.reasoning
+        theory = extract_theory(text)
+        if theory is None:
+            verdict = {"verified": False, "method": "isabelle-unverifiable",
+                       "detail": "no ```isabelle theory block in model output"}
+            messages += [{"role": "assistant", "content": text},
+                         {"role": "user", "content": "You did not emit a ```isabelle "
+                          "fenced theory block. Output ONLY the complete theory in one."}]
+            continue
+
+        yield {"type": "checking", "attempt": attempt + 1}
+        async with _PROOF_SEMAPHORE:
+            verdict, raw = await asyncio.to_thread(
+                check_isabelle, theory, target, return_raw=True)
+        yield {"type": "checked", "attempt": attempt + 1,
+               "method": verdict["method"], "detail": verdict["detail"]}
+
+        if verdict["verified"] or verdict["method"] == "isabelle-refuted":
+            break
+        if attempt < max_repair:
+            err = (raw or verdict["detail"])[-1500:]
+            messages += [{"role": "assistant", "content": text},
+                         {"role": "user", "content": REPAIR_PROMPT.format(error=err)}]
+            yield {"type": "repairing", "attempt": attempt + 2}
+
+    wall_ms = (time.monotonic() - started) * 1000
+    confidence_type = ("verified" if verdict["verified"]
+                       else "refuted" if verdict["method"] == "isabelle-refuted"
+                       else "unverified")
+    answer = _formal_answer(confidence_type, target)
+    full_text = (theory or "") + f"\n\n(* verdict: {verdict['method']} — {verdict['detail']} *)"
+
+    if store is not None and run_id is not None:
+        sample_id = store.add_sample(run_id, prover_alias, 0.2, theory or "",
+                                     target, tokens_out, wall_ms)
+        store.add_verification(sample_id, verdict["method"], verdict["verified"],
+                               verdict["detail"])
+        store.finish_run(run_id, verdict=confidence_type, answer=answer,
+                         confidence_type=confidence_type, tokens_in=tokens_in,
+                         tokens_out=tokens_out, wall_ms=wall_ms)
+
+    yield {"type": "result", "run_id": run_id, "answer": answer, "full_text": full_text,
+           "theory": theory, "method": verdict["method"], "detail": verdict["detail"],
+           "confidence_type": confidence_type, "tokens_in": tokens_in,
+           "tokens_out": tokens_out, "wall_ms": round(wall_ms)}
+
+
+# ============================================================================
 # Auto-routing with escalation. [M3 — spec §3.1 misroute insurance]
 # ============================================================================
 
@@ -722,6 +881,13 @@ async def run_auto(
 
     yield {"type": "routed", "domain": r.domain, "difficulty": r.difficulty,
            "votable": r.votable, "rationale": r.rationale, "tier": r.tier}
+
+    # metaphysics is dispatched by DOMAIN to the formal (Isabelle) flow, not by tier
+    # number — it is a distinct pipeline (prove/refute with the kernel). [ADR-006]
+    if r.domain == "metaphysics":
+        async for ev in run_tier_formal(client, store, problem, problem_id=problem_id):
+            yield ev
+        return
 
     if r.tier == 1:
         result = None

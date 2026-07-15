@@ -4,6 +4,7 @@ import { getJSON } from "./api.js";
 const VERDICT_BADGE = {
   verified: "badge-verified", consensus: "badge-neutral",
   judged: "badge-judge", unverified: "badge-fail", invalid: "badge-fail",
+  refuted: "badge-refuted",  // a kernel countermodel: a positive result (claim is false)
 };
 
 function Detail({ runId, onClose }) {
@@ -105,7 +106,7 @@ export default function TracesPage() {
         <select value={fVerdict} onChange={(e) => setFVerdict(e.target.value)}
                 className="bg-zinc-900 border border-zinc-700 rounded p-1 text-xs">
           <option value="">all verdicts</option>
-          {["verified", "consensus", "judged", "unverified", "invalid"].map((v) => <option key={v}>{v}</option>)}
+          {["verified", "refuted", "consensus", "judged", "unverified", "invalid"].map((v) => <option key={v}>{v}</option>)}
         </select>
       </div>
       <table className="w-full text-xs">

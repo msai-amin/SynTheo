@@ -96,10 +96,15 @@ tiers:
     skeptic_model: mid
     judge_model: fast   # third family; falls back to mid if mid didn't play skeptic this run
     max_rebuttal_rounds: 1
+  formal:               # [ADR-006 Phase 1] Isabelle/HOL proving (run_tier_formal)
+    prover_model: heavy
+    parent_session: GoedelGod
+    max_repair_rounds: 1   # one chance to fix a failed build from the kernel's error
 
 routing:
   # [LOCKED] philosophy|mixed -> tier3; difficulty<=2 and votable -> tier1; else tier2
   philosophy_or_mixed_tier: 3
+  metaphysics_tier: 3          # label only; run_auto dispatches metaphysics to run_tier_formal
   reflex_max_difficulty: 2
   shadow_rerun_fraction: 0.01   # fraction of Tier-1 verified successes shadow-re-run at Tier 2
 

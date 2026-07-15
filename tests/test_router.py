@@ -10,6 +10,7 @@ from core.router import RouteError, _parse, decide_tier
 CFG = {
     "routing": {
         "philosophy_or_mixed_tier": 3,
+        "metaphysics_tier": 3,
         "reflex_max_difficulty": 2,
     }
 }
@@ -30,14 +31,16 @@ MATRIX = [
     ("logic", 1, False, 2),
     ("math", 4, False, 2),
     ("logic", 2, False, 2),       # votable=False overrides the difficulty<=2 reflex path
+    ("metaphysics", 1, True, 3),   # metaphysics -> formal marker, ignores difficulty/votable
+    ("metaphysics", 5, False, 3),
 ]
 
 @pytest.mark.parametrize("domain,difficulty,votable,expected_tier", MATRIX)
 def test_decide_tier_matrix(domain, difficulty, votable, expected_tier):
     assert decide_tier(domain, difficulty, votable, CFG) == expected_tier
 
-def test_matrix_has_12_cases():
-    assert len(MATRIX) == 12
+def test_matrix_has_14_cases():
+    assert len(MATRIX) == 14
 
 
 # --- JSON parsing robustness ---
@@ -58,6 +61,10 @@ def test_parse_no_json_raises():
 def test_parse_bad_domain_raises():
     with pytest.raises(RouteError):
         _parse('{"domain": "biology", "difficulty": 2, "votable": true}')
+
+def test_parse_accepts_metaphysics():
+    d = _parse('{"domain": "metaphysics", "difficulty": 3, "votable": false, "rationale": "z"}')
+    assert d["domain"] == "metaphysics"
 
 def test_parse_bad_difficulty_raises():
     with pytest.raises(RouteError):

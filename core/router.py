@@ -3,6 +3,7 @@
 One fast call, <=200 completion tokens, JSON: {domain, difficulty, votable, rationale}.
 
 Routing rule [LOCKED]:
+    metaphysics                 -> formal (Isabelle/HOL proving; see run_tier_formal)
     philosophy | mixed          -> tier 3
     difficulty <= 2 and votable -> tier 1
     else                        -> tier 2
@@ -17,14 +18,18 @@ from core.llm import LLMClient, LLMError
 ROUTER_PROMPT = """Classify this problem. Output ONLY a single JSON object, no
 other text, no reasoning, no markdown fences.
 
-The "domain" field must be exactly one of these four words: math, logic,
-philosophy, mixed. Never output the list itself or a placeholder — pick one.
+The "domain" field must be exactly one of these five words: math, logic,
+philosophy, metaphysics, mixed. Never output the list itself or a placeholder — pick one.
+Use "metaphysics" ONLY for questions whose answer is a formal higher-order-modal
+theorem to be proved or refuted mechanically — existence-of-God / ontological
+arguments, modal collapse, necessity of a property. Ordinary open-ended value or
+meaning questions are "philosophy", not "metaphysics".
 
 Example output for "What is 12% of 250?":
 {{"domain": "math", "difficulty": 1, "votable": true, "rationale": "simple arithmetic"}}
 
 Now classify this problem in the same format:
-{{"domain": <one of: math, logic, philosophy, mixed>, "difficulty": <1-5 integer>,
+{{"domain": <one of: math, logic, philosophy, metaphysics, mixed>, "difficulty": <1-5 integer>,
   "votable": <true if independent solvers would converge on one short
   canonical answer (a number, a word, a letter); false if open-ended prose>,
   "rationale": "<one short sentence>"}}
@@ -32,7 +37,7 @@ Now classify this problem in the same format:
 Problem:
 {problem}"""
 
-_VALID_DOMAINS = {"math", "logic", "philosophy", "mixed"}
+_VALID_DOMAINS = {"math", "logic", "philosophy", "metaphysics", "mixed"}
 
 
 class RouteError(ValueError):
@@ -72,8 +77,14 @@ def _parse(raw: str) -> dict:
 
 
 def decide_tier(domain: str, difficulty: int, votable: bool, cfg: dict) -> int:
-    """Pure routing decision — the LOCKED rule, isolated for testing."""
+    """Pure routing decision — the LOCKED rule, isolated for testing.
+
+    metaphysics maps to the formal tier marker (config routing.metaphysics_tier);
+    run_auto dispatches it to run_tier_formal by domain, not by this number, so the
+    number is only the label shown in the `routed` event."""
     routing = cfg["routing"]
+    if domain == "metaphysics":
+        return routing["metaphysics_tier"]
     if domain in ("philosophy", "mixed"):
         return routing["philosophy_or_mixed_tier"]
     if difficulty <= routing["reflex_max_difficulty"] and votable:

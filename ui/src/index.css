@@ -15,10 +15,14 @@ body {
 .badge-fail     { @apply bg-red-950 text-red-300 border border-red-700; }
 .badge-judge    { @apply bg-amber-950 text-amber-300 border border-amber-600; }
 .badge-neutral  { @apply bg-zinc-800 text-zinc-300 border border-zinc-600; }
+/* refuted: a kernel countermodel — a POSITIVE result (the claim is false), so it is
+   its own colour, distinct from both verified (teal) and failure (red). */
+.badge-refuted  { @apply bg-violet-950 text-violet-300 border border-violet-600; }
 
 .card { @apply bg-zinc-900 border border-zinc-800 rounded p-3; }
 
 .answer-verified { @apply border-2 border-teal-500; }
 .answer-consensus { @apply border-2 border-dashed border-teal-600; }
 .answer-judged { @apply border-2 border-amber-500; }
+.answer-refuted { @apply border-2 border-violet-500; }
 .answer-unverified { @apply border-2 border-zinc-600; }

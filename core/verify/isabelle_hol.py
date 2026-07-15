@@ -125,8 +125,12 @@ def _strip_comments(theory_text: str) -> str:
 
 
 def _normalize(prop: str) -> str:
-    """Collapse whitespace and drop surrounding quotes so goal/target comparison is
-    layout-insensitive."""
+    """Collapse whitespace runs and drop surrounding quotes for goal/target comparison.
+    Deliberately conservative (ADR-004 fails in the safe direction): it does NOT strip
+    whitespace around operators, because a space can change the operator — `m\\<rightarrow>`
+    (modal implication) and `m \\<rightarrow>` (a variable `m`, then HOL `\\<rightarrow>`) are
+    genuinely different propositions to Isabelle, so treating them as equal would let a
+    model pass the goal check with an easier neighbour of the target."""
     return re.sub(r"\s+", " ", prop).strip().strip('"').strip().rstrip(".")
 
 
@@ -245,7 +249,8 @@ def _status_detail(status: str, out: str) -> str:
     return "no proof and no countermodel (timeout or open goal)"
 
 
-def check_isabelle(theory_text: str, target_statement: str | None = None) -> dict:
+def check_isabelle(theory_text: str, target_statement: str | None = None,
+                   *, return_raw: bool = False):
     """The verifier entry point. Returns the flat backend contract
     {"verified": bool, "method": str, "detail": str}, with the three-way outcome
     carried in `method`:
@@ -254,13 +259,18 @@ def check_isabelle(theory_text: str, target_statement: str | None = None) -> dic
                                               result in metaphysics: the claim is false)
       - static anti-gaming rejection       -> method "isabelle-rejected"   (not verified)
       - neither (timeout / open goal)      -> method "isabelle-unverifiable" (-> judge)
-    The relied-on embedding/logic is appended to `detail`."""
+    The relied-on embedding/logic is appended to `detail`. With return_raw=True,
+    returns (verdict_dict, raw_build_log) so a caller can feed the error into a repair
+    round (run_tier_formal)."""
     embedding = detect_embedding(theory_text)
+
+    def _out(verdict: dict, raw: str):
+        return (verdict, raw) if return_raw else verdict
 
     reason = static_rejection(theory_text, target_statement)
     if reason is not None:
-        return {"verified": False, "method": "isabelle-rejected",
-                "detail": f"{reason} [logic: {embedding}]"}
+        return _out({"verified": False, "method": "isabelle-rejected",
+                     "detail": f"{reason} [logic: {embedding}]"}, "")
 
     result = run_isabelle_sandboxed(theory_text)
 
@@ -270,14 +280,16 @@ def check_isabelle(theory_text: str, target_statement: str | None = None) -> dic
     # on a countermodel, not on the submission's proof, so these don't touch it.
     if result.status == "verified":
         if has_oops(theory_text):
-            return {"verified": False, "method": "isabelle-rejected",
-                    "detail": f"goal cancelled with oops, not proved [logic: {embedding}]"}
+            return _out({"verified": False, "method": "isabelle-rejected",
+                         "detail": f"goal cancelled with oops, not proved [logic: {embedding}]"},
+                        result.raw)
         if introduces_axiom(theory_text):
-            return {"verified": False, "method": "isabelle-rejected",
-                    "detail": f"proof rests on a model-introduced axiom [logic: {embedding}]"}
+            return _out({"verified": False, "method": "isabelle-rejected",
+                         "detail": f"proof rests on a model-introduced axiom [logic: {embedding}]"},
+                        result.raw)
 
     method = {"verified": "isabelle",
               "refuted": "isabelle-refuted",
               "unverifiable": "isabelle-unverifiable"}[result.status]
-    return {"verified": result.status == "verified", "method": method,
-            "detail": f"{result.detail} [logic: {embedding}]"}
+    return _out({"verified": result.status == "verified", "method": method,
+                 "detail": f"{result.detail} [logic: {embedding}]"}, result.raw)
