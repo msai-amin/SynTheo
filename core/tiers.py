@@ -729,10 +729,19 @@ Write ONE complete Isabelle theory. Rules:
     theory Submission imports "GoedelGod.GoedelGod" begin
     theorem target: "[m\<not> (\<exists> G)]" nitpick [user_axioms, expect = genuine] oops
     end
+- PROOF SEARCH: if NO single theorem states your goal, you must PROVE it — do not give up.
+  A bare `sledgehammer` does NOT close a goal in batch mode; write the actual tactic it
+  would suggest. Effective closers, roughly in order to try:
+    by simp        by auto        by blast        by (simp add: G_def NE_def ess_def)
+    using <thms> by metis          using <thms> by (metis (full_types))
+    using <thms> by (smt (verit))                (Z3, CVC5, E, Vampire, SPASS are available)
+  Combine several cited theorems when needed, e.g. `using T3 Monotheism by simp` or
+  `by (metis C T1 T3)`. Unfold definitions with `add: G_def` to reason under `G`.
 - Never write sorry, and never add a new axiomatization/axiom — use only what the entry
-  already proves. Reproduce the target statement CHARACTER-FOR-CHARACTER, including
-  operator spelling: write `m\<rightarrow>` (no internal space), not `m \<rightarrow>` — a
-  space changes the operator and the goal will not match.
+  already proves. Reproduce the target statement CHARACTER-FOR-CHARACTER, including every
+  parenthesis and the exact operator spelling. The lifted modal operators have NO internal
+  space: write `m\<and>` `m\<or>` `m\<rightarrow>` `m\<not>` `m\<equiv>` — never `m \<and>` or
+  `m \<rightarrow>`. A space splits the operator into two tokens and the goal will not match.
 
 Output ONLY the theory in a single ```isabelle fenced block."""
 
@@ -741,8 +750,9 @@ REPAIR_PROMPT = r"""Your theory did not check. Isabelle reported:
 {error}
 
 Fix it and output ONLY the corrected complete ```isabelle block. Likely fixes: cite the
-right existing theorem (T1/C/T2/T3/C2/Flawlessness/Monotheism), use `by (metis <lemmas>)`
-or `by simp`, keep the import `"GoedelGod.GoedelGod"`, and state the goal exactly."""
+right existing theorem (T1/C/T2/T3/C2/Flawlessness/Monotheism); try a stronger closer —
+`by (metis <lemmas>)`, `by (smt (verit))`, `by auto`, `by blast`, or `by (simp add: G_def)`;
+combine several `using` lemmas; keep the import `"GoedelGod.GoedelGod"`; state the goal exactly."""
 
 
 def _formal_answer(confidence_type: str, target: str | None) -> str:

@@ -61,8 +61,15 @@ models:
 
   super_swap:
     # Alternate for `heavy` under the super-swap profile. Not launched by default.
+    # [BLOCKED 2026-07-15] Downloaded (75 GB) and attempted an A/B swap: this checkpoint
+    # is MIXED_PRECISION ModelOpt quant (FP8 attention/mixer + NVFP4 MoE experts, per
+    # layer), which the pinned vLLM 25.12 (ADR-001) rejects — its ModelOpt path supports
+    # only UNIFORM FP8 or NVFP4. Serving it needs a newer vLLM with mixed-precision
+    # ModelOpt support (and that would confound any A/B, since heavy runs on 25.12).
     role: "primary generator (super-swap profile)"
-    repo: nvidia/Nemotron-3-Super-120B-A12B-NVFP4
+    # Repo name carries the NVIDIA- prefix like the Nano entries (verified on HF
+    # 2026-07-15: the un-prefixed name 401s, this one is public, 80 GB, ungated).
+    repo: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
     quant: nvfp4
     port: 8001
     served_model_name: heavy
