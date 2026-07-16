@@ -13,14 +13,16 @@ paths:
 models:
   heavy:
     role: "primary generator (math/logic BoN; prover)"
-    repo: openai/gpt-oss-120b
+    # gpt-oss-20b replaced gpt-oss-120b on 2026-07-16 (eval A/B: 100% core tier2 tie,
+    # formal within variance, weights 66->13.7 GiB => +48 GiB headroom). Same gpt-oss
+    # family/MXFP4, so the serving path and the cross-family judge design are unchanged.
+    repo: openai/gpt-oss-20b
     quant: mxfp4
     port: 8001
     served_model_name: heavy
-    # Measured 2026-07-13: model loading takes 66.0 GiB (not the ~61 the plan assumed)
-    # + ~3 GiB activation reserve. 0.60 of ~119.6 GiB = 71.8 GiB -> ~2.8 GiB KV.
-    approx_mem_gb: 69
-    gpu_memory_utilization: 0.60
+    # Measured 2026-07-15: loads at 13.7 GiB. util 0.20 -> ~24 GiB (huge KV, 155k tokens).
+    approx_mem_gb: 14
+    gpu_memory_utilization: 0.20
     max_num_seqs: 16
     max_model_len: 24576
     timeout_s: 300

@@ -32,10 +32,14 @@ services:
     command:
       - vllm
       - serve
-      - openai/gpt-oss-120b
+      # gpt-oss-20b (MXFP4, ~13.7 GiB) replaced gpt-oss-120b (66 GiB) on 2026-07-16 after an
+      # eval A/B: identical 100% on core tier2, formal within run-to-run variance, +48 GiB
+      # headroom. Same family/quant so the serving path + cross-family judge are unchanged.
+      - openai/gpt-oss-20b
       - --served-model-name=heavy
       - --port=8001
-      - --gpu-memory-utilization=0.60
+      # util 0.20 = ~24 GiB (14 weights + huge KV, 155k tokens); RAM is abundant now.
+      - --gpu-memory-utilization=0.20
       - --max-num-seqs=16
       - --max-model-len=24576
     healthcheck:

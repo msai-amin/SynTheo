@@ -12,3 +12,4 @@ knowledge of the tools involved.
 | [ADR-004](adr-004-anti-gaming-verification.md) | Only count model checking code as "verification" if it genuinely recomputes the answer — echo blocks, answer-seeded code, and self-checks of open-ended essays are rejected. | Accepted |
 | [ADR-005](adr-005-sqlite-episode-store.md) | Record every run, sample, verification, and judgment in SQLite (one local file) rather than PostgreSQL or JSON logs. | Accepted |
 | [ADR-006](adr-006-isabelle-verification-backend.md) | Add Isabelle/HOL as a fourth verification backend for formal metaphysics, run as an on-demand memory-capped container (not a warm server) to respect the ADR-002 memory gate. | Accepted (Phase 0, gate passed) |
+| [ADR-007](adr-007-heavy-gpt-oss-20b.md) | Replace the `heavy` model with gpt-oss-20b (same family/quant, 66→13.7 GiB) to free ~48 GiB — after an eval A/B showed a 100% core-workload tie and formal within variance. | Accepted |
