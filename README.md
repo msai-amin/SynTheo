@@ -4,6 +4,13 @@ A local verified-reasoning engine for a single DGX Spark: verified Best-of-N for
 math/logic, a prover/skeptic pair for philosophy, and an episode store built for a
 future GRPO flywheel. Full spec: see the implementation prompt in project history.
 
+**What it's for:** for math and formal logic, SynTheo doesn't trust a model's answer on its
+say-so — it samples several candidate solutions and checks them against formal verifiers
+(Isabelle/HOL, Z3) before accepting one. For philosophy, where there's no ground-truth
+checker, it instead runs a prover model and a skeptic model against each other and has a
+judge weigh the exchange. Every run is logged to an episode store so the whole thing can
+later be turned into training signal (the "GRPO flywheel").
+
 ## Status: M0 — serving + skeleton
 
 ## Runbook
